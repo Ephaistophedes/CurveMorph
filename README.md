@@ -12,7 +12,7 @@ Add-ons, use **Install from Disk** and select that zip. Enable
 **CurveMorph — Bézier Shape Keys**. Open the 3D View sidebar (`N`) and select
 **CurveMorph**. Blender 5.0+ is declared; runtime tests were run on Blender 5.2.1 LTS.
 
-![Neutral, open, and smile expressions posed with CurveMorph](docs/images/demo_neutral.png)
+![Neutral expression posed with CurveMorph](docs/images/demo_neutral.png) ![Open expression posed with CurveMorph](docs/images/demo_open.png) ![Smile expression posed with CurveMorph](docs/images/demo_smile.png)
 
 ## Pose a mouth
 
@@ -20,12 +20,18 @@ Add-ons, use **Install from Disk** and select that zip. Enable
    values to zero. If a character rig already exists, use its neutral pose.
 2. In mesh Edit Mode, select **one connected, closed edge loop** around the
    mouth. Four or more vertices are required; select no extra vertices or edges.
+
+   ![A closed 64-vertex mouth loop selected in Edit Mode, ready for Store Loop](docs/images/workflow_loop.png)
+
 3. Click **Store Loop**. Click **Select / Refine Corners**, select exactly two
    vertices on that loop (one at each mouth corner), then **Store Corners**.
    Each corner gets an exact Bézier control; other controls follow the two lip arcs.
    Or click **Auto** to select the stored loop's minimum-X and maximum-X vertices,
    then **Store Corners** to confirm. Auto uses the neutral mesh's local X axis,
    regardless of the object's position, rotation, or current mouth pose.
+
+   ![The cyan stored-loop guide during corner picking, zoomed on one mouth corner](docs/images/workflow_corners.png)
+
 4. Optionally enable **Limit to Vertex Group**. Choose an existing group, or
    select affected vertices in Edit Mode and **Create Group from Selection**.
    Leave the option off to use distance falloff alone.
@@ -33,6 +39,10 @@ Add-ons, use **Install from Disk** and select that zip. Enable
    **Falloff**. Before creation, distance 0 chooses a mouth-sized starting value.
 6. Click **Create Controls**. In the resulting curve Edit Mode, click a point
    and press `G` to move it. The mesh previews the change live.
+
+   ![The finished 8-point Bézier ring around the lips after Create Controls](docs/images/workflow_controls.png)
+   ![Close-up of a corner control point, pinned exactly to the stored corner vertex](docs/images/workflow_corners_detail.png)
+
 7. Adjust **Influence Distance** and **Falloff** while posing. Distance measures
    travel along connected mesh edges in world units. During a session, 0 moves
    only the selected loop. Higher falloff concentrates the movement near it.
@@ -71,7 +81,7 @@ setting (Linear, Ease, Cardinal, or B-spline). **Save Shape Key** includes the
 roll, and **Reset Pose** / **Rebuild Controls** return tilt to zero. Existing
 sessions support tilt without rebuilding; previously saved keys remain unchanged.
 
-![Lips rolled negative, neutral, and positive with Ctrl+T tilt](docs/images/tilt_neutral.png)
+![Lips rolled negative with Ctrl+T tilt](docs/images/tilt_roll_negative.png) ![Lips at neutral tilt](docs/images/tilt_neutral.png) ![Lips rolled positive with Ctrl+T tilt](docs/images/tilt_roll_positive.png)
 
 ### Symmetrize a pose
 
