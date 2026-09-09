@@ -12,8 +12,6 @@ Add-ons, use **Install from Disk** and select that zip. Enable
 **CurveMorph — Bézier Shape Keys**. Open the 3D View sidebar (`N`) and select
 **CurveMorph**. Blender 5.0+ is declared; runtime tests were run on Blender 5.2.1 LTS.
 
-![Neutral expression posed with CurveMorph](docs/images/demo_neutral.png) ![Open expression posed with CurveMorph](docs/images/demo_open.png) ![Smile expression posed with CurveMorph](docs/images/demo_smile.png)
-
 ## Pose a mouth
 
 1. Select the character mesh. Use its neutral **Basis** and set other shape-key
@@ -70,8 +68,15 @@ them; **Alt+T** clears the selected points' tilt. These are Blender's native
 Nearby mesh vertices now roll around the mouth-loop tangent, with live preview.
 The stored loop is the twist axis, so pure tilt does not move its vertices.
 
-Tilt uses the same **Influence Distance**, **Falloff**, and optional vertex-group
-weights as movement. Use a nonzero influence distance with surrounding vertices
+Tilt uses the same **Influence Distance**, **Falloff Type**, **Falloff Strength**,
+and overall vertex-group mask as movement. The optional **Twist Mask** group in
+Setup adds a separate weight multiplier to twist only: weight 0 prevents twisting,
+weight 1 allows full twisting, and fractional weights soften it. Moving the curve
+points is unaffected by this extra mask. Leave the field blank to disable it.
+The overall mask still applies to both movement and twist; the two masks multiply.
+Saved shape keys bake both masks, so later group edits do not alter saved poses.
+
+Use a nonzero influence distance with surrounding vertices
 included in the mask; distance 0 leaves nothing off the axis to rotate. Start
 with modest angles. Large twists can fold or compress the surface; this is not
 a collision or volume-preservation solver.
@@ -81,7 +86,25 @@ setting (Linear, Ease, Cardinal, or B-spline). **Save Shape Key** includes the
 roll, and **Reset Pose** / **Rebuild Controls** return tilt to zero. Existing
 sessions support tilt without rebuilding; previously saved keys remain unchanged.
 
-![Lips rolled negative with Ctrl+T tilt](docs/images/tilt_roll_negative.png) ![Lips at neutral tilt](docs/images/tilt_neutral.png) ![Lips rolled positive with Ctrl+T tilt](docs/images/tilt_roll_positive.png)
+### Influence falloff profiles
+
+Choose **Falloff Type** before creating controls or change it live while posing:
+**Smooth**, **Sphere**, **Root**, **Inverse Square**, **Sharp**, **Linear**,
+**Constant**, or **Random**. These use Blender-style proportional-editing profiles,
+but distance still follows connected mesh edges from the stored mouth loop.
+The chosen profile applies to both movement and twist.
+
+**Smooth** remains the default and preserves the previous behavior. **Falloff
+Strength** is the existing exponent control: 1 uses the chosen profile as-is;
+higher values concentrate influence. **Constant** uses full influence inside
+the distance with a hard cutoff (strength has no effect). **Random** exposes a
+**Random Seed** and keeps its per-vertex pattern stable while posing, changing
+the radius, and reopening the file. Change the seed for a different pattern.
+Constant and Random can create abrupt or irregular deformation; use them deliberately.
+
+The selected loop retains full movement influence (subject to the overall mask).
+Distance 0 affects only that loop; off-axis twist then has no effect. Disconnected
+geometry remains excluded for every profile.
 
 ### Symmetrize a pose
 
@@ -123,7 +146,8 @@ For the optional group, use **Select Affected**, **Assign**, **Remove**, or
 weight 0 prevents movement, 1 allows the full falloff, and fractional weights
 soften it. This also applies to vertices on the mouth loop itself. Mask edits
 preserve the control pose; resume after editing to see the result. Disabling the
-mask restores distance-only influence. Saved keys bake the mask once, so later
+mask removes the overall restriction; the separate Twist Mask still applies if
+chosen. Saved keys bake the mask once, so later
 group edits do not alter those expressions. Creating a group never overwrites
 an existing group with the same name.
 
@@ -170,8 +194,8 @@ Run `python -m unittest discover -s tests -p 'test_geometry*.py'` for numerical 
 Run Blender with `--background --factory-startup --python-exit-code 1 --python`
 followed by `tests/test_blender_integration.py`, `tests/test_blender_setup.py`,
 `tests/test_blender_symmetry.py`, `tests/test_blender_corner_overlay.py`,
-`tests/test_blender_auto_corners.py`, `tests/test_blender_tilt.py`,
-`tests/test_blender_twist_mask_falloff.py`, `tests/test_addon_registration.py`,
+`tests/test_blender_auto_corners.py`, `tests/test_blender_tilt.py`, `tests/test_addon_registration.py`,
+`tests/test_blender_twist_mask_falloff.py`,
 or `tests/test_blender_undo.py`.
 `python tests/package_addon.py` builds the installable ZIP.
 
