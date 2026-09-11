@@ -67,6 +67,53 @@ def order_closed_loop(vertex_count, edges):
     return ordered
 
 
+def order_path(vertex_count, edges):
+    """Return (ordered vertices, closed); accept exactly one unbranched path."""
+    edges = _edges(edges, vertex_count)
+    adjacency, unique = {}, set()
+    for a, b in edges:
+        a, b = int(a), int(b)
+        pair = tuple(sorted((a, b)))
+        if pair in unique:
+            raise ValueError('The selection contains duplicate edges')
+        unique.add(pair)
+        adjacency.setdefault(a, []).append(b)
+        adjacency.setdefault(b, []).append(a)
+    if not adjacency or any(len(n) > 2 for n in adjacency.values()):
+        raise ValueError('Select one edge chain or closed loop without branches')
+    ends = sorted(i for i, neighbors in adjacency.items() if len(neighbors) == 1)
+    if not ends:
+        return order_closed_loop(vertex_count, edges), True
+    if len(ends) != 2:
+        raise ValueError('Select a single connected edge chain')
+    ordered, previous, current = [], None, ends[0]
+    while current is not None:
+        ordered.append(current)
+        following = [i for i in adjacency[current] if i != previous]
+        previous, current = current, following[0] if following else None
+    if len(ordered) != len(adjacency):
+        raise ValueError('Select a single connected edge chain')
+    return ordered, False
+
+
+def path_layout(points, count, closed=False):
+    """Arc-length sampling with exact open endpoints and no closing segment."""
+    points = _points(points)
+    if int(count) != count or not (4 if closed else 2) <= count <= 64:
+        raise ValueError('Choose 2–64 open controls or 4–64 closed controls')
+    if closed:
+        return resample_loop(points, count), cyclic_parameters(points)[0]
+    if len(points) < 2:
+        raise ValueError('An open path needs at least two points')
+    cumulative = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
+    if cumulative[-1] <= 0:
+        raise ValueError('The path has zero usable length')
+    parameters = cumulative / cumulative[-1]
+    controls = np.column_stack([np.interp(np.linspace(0, 1, int(count)), parameters, points[:, i])
+                                for i in range(3)])
+    return controls, parameters
+
+
 def cyclic_parameters(points):
     """Return polygon arc fractions and perimeter, including the closing edge."""
     points = _points(points)
@@ -106,7 +153,7 @@ def resample_loop(points, count):
     )
 
 
-def evaluate_bezier(co, handle_left, handle_right, parameters):
+def evaluate_bezier(co, handle_left, handle_right, parameters, closed=True):
     """Evaluate cyclic cubic segments at fractions of the total segment count.
 
     Parameters are the same fixed correspondence in the resting and posed
@@ -121,8 +168,11 @@ def evaluate_bezier(co, handle_left, handle_right, parameters):
     parameters = np.asarray(parameters, dtype=np.float64)
     if parameters.ndim != 1 or not np.isfinite(parameters).all():
         raise ValueError("Curve parameters must be a finite one-dimensional array")
-    position = np.remainder(parameters, 1.0) * len(co)
+    position = (np.remainder(parameters, 1.0) * len(co) if closed
+                else np.clip(parameters, 0, 1) * (len(co) - 1))
     integral = np.floor(position).astype(np.int64)
+    if not closed:
+        integral = np.minimum(integral, len(co) - 2)
     # A negative parameter less than machine epsilon can round its remainder
     # to exactly 1.0; wrapping the segment also covers that seam case.
     segment = integral % len(co)
@@ -137,15 +187,70 @@ def evaluate_bezier(co, handle_left, handle_right, parameters):
     )
 
 
-def bezier_tangents(co, handle_left, handle_right, parameters):
-    """Unit tangents at fixed cyclic parameters; degenerate segments return zero."""
+def reparameterize_bezier(co, handle_left, handle_right, reference, closed=True):
+    """Locate previous rest samples on a fitted spline after point-count edits.
+
+    Segment indices change under uneven subdivision or deletion (including the
+    cyclic seam). Spatial projection preserves the original mesh seeds instead
+    of assigning their old normalized indices to unrelated new segments.
+    A sampled polyline supplies a global candidate, refined on the cubic itself.
+    Call in world space so nonuniform object scale does not bias the fit.
+    """
+    co, left, right = _points(co), _points(handle_left), _points(handle_right)
+    reference = _points(reference)
+    if co.shape != left.shape or co.shape != right.shape or len(co) < 2:
+        raise ValueError('Use matching Bézier points and handles with at least two controls')
+    segments = len(co) if closed else len(co) - 1
+    steps = 32
+    samples = np.linspace(0, 1, segments * steps + 1)
+    path = evaluate_bezier(co, left, right, samples, closed)
+    edges = np.diff(path, axis=0)
+    length2 = np.einsum('ij,ij->i', edges, edges)
+    if not np.any(length2 > 0):
+        raise ValueError('The fitted curve has zero usable length; move points apart or Cancel Fit')
+    result = np.empty(len(reference))
+    for start in range(0, len(reference), 64):
+        points = reference[start:start+64]
+        offsets = points[:, None, :] - path[None, :-1, :]
+        t = np.divide(np.einsum('qsi,si->qs', offsets, edges), length2,
+                      out=np.zeros(offsets.shape[:2]), where=length2 > 0).clip(0, 1)
+        distance2 = np.sum((offsets - t[:, :, None] * edges) ** 2, axis=2)
+        closest = np.argmin(distance2, axis=1)
+        segment = closest // steps
+        local = (closest % steps + t[np.arange(len(points)), closest]) / steps
+        following = (segment + 1) % len(co)
+        p0, p1, p2, p3 = co[segment], right[segment], left[following], co[following]
+        for _ in range(8):
+            u = local[:, None]
+            point = (1-u)**3*p0 + 3*(1-u)**2*u*p1 + 3*(1-u)*u*u*p2 + u**3*p3
+            first = 3*((1-u)**2*(p1-p0) + 2*(1-u)*u*(p2-p1) + u*u*(p3-p2))
+            second = 6*((1-u)*(p2-2*p1+p0) + u*(p3-2*p2+p1))
+            denominator = np.sum(first*first + (point-points)*second, axis=1)
+            step = np.divide(np.sum((point-points)*first, axis=1), denominator,
+                             out=np.zeros(len(points)), where=denominator > 0)
+            local = np.clip(local - step, 0, 1)
+        parameters = (segment + local) / segments
+        result[start:start+len(points)] = np.remainder(parameters, 1) if closed else parameters
+    return result
+
+
+def bezier_tangents(co, handle_left, handle_right, parameters, average_joints=False, closed=True):
+    """Unit tangents; optionally bisect the two directions at control points.
+
+    Tilt needs a shared axis at a sharp corner: choosing only the outgoing lip
+    would make the result depend on loop winding and break mirrored poses.
+    Degenerate segments (or opposing directions at a joint) return zero.
+    """
     co = _points(co)
     left, right = _points(handle_left), _points(handle_right)
     if co.shape != left.shape or co.shape != right.shape or not len(co):
         raise ValueError("Control points and handles must have matching lengths")
-    position = np.remainder(parameters, 1.0) * len(co)
+    position = (np.remainder(parameters, 1.0) * len(co) if closed
+                else np.clip(parameters, 0, 1) * (len(co) - 1))
     segment = np.floor(position).astype(np.int64) % len(co)
-    t = (position - np.floor(position))[:, None]
+    if not closed:
+        segment = np.minimum(segment, len(co) - 2)
+    t = (position - segment)[:, None]
     following = (segment + 1) % len(co)
     tangent = ((1-t)**2 * (right[segment] - co[segment])
                + 2*(1-t)*t * (left[following] - right[segment])
@@ -155,10 +260,28 @@ def bezier_tangents(co, handle_left, handle_right, parameters):
     degenerate = lengths <= np.linalg.norm(chord, axis=1) * 1e-12
     tangent[degenerate] = chord[degenerate]
     lengths = np.linalg.norm(tangent, axis=1)
-    return np.divide(tangent, lengths[:, None], out=np.zeros_like(tangent), where=lengths[:, None] > 0)
+    unit = np.divide(tangent, lengths[:, None], out=np.zeros_like(tangent), where=lengths[:, None] > 0)
+    if average_joints:
+        at_joint = np.isclose(position, np.rint(position), rtol=0, atol=1e-12)
+        if not closed:
+            at_joint &= (position > 0) & (position < len(co) - 1)
+        joints = np.rint(position[at_joint]).astype(np.int64) % len(co)
+        incoming, outgoing = co[joints] - left[joints], right[joints] - co[joints]
+        sides = []
+        for vectors, fallback in ((incoming, co[joints] - co[(joints-1) % len(co)]),
+                                  (outgoing, co[(joints+1) % len(co)] - co[joints])):
+            lengths = np.linalg.norm(vectors, axis=1)
+            degenerate = lengths <= np.linalg.norm(fallback, axis=1)*1e-12
+            vectors[degenerate] = fallback[degenerate]
+            lengths = np.linalg.norm(vectors, axis=1)[:, None]
+            sides.append(np.divide(vectors, lengths, out=np.zeros_like(vectors), where=lengths > 0))
+        bisector = sides[0] + sides[1]
+        lengths = np.linalg.norm(bisector, axis=1)[:, None]
+        unit[at_joint] = np.divide(bisector, lengths, out=np.zeros_like(bisector), where=lengths > 1e-12)
+    return unit
 
 
-def interpolate_tilt(tilts, parameters, interpolation='LINEAR'):
+def interpolate_tilt(tilts, parameters, interpolation='LINEAR', closed=True):
     """Sample native cyclic tilt values in radians, without angle wrapping.
 
     Blender's Cardinal mode uses tension 0.71; see key_curve_position_weights:
@@ -169,16 +292,19 @@ def interpolate_tilt(tilts, parameters, interpolation='LINEAR'):
     if (tilts.ndim != 1 or not len(tilts) or not np.isfinite(tilts).all()
             or parameters.ndim != 1 or not np.isfinite(parameters).all()):
         raise ValueError("Tilt values and parameters must be finite arrays")
-    position = np.remainder(parameters, 1.0) * len(tilts)
+    position = (np.remainder(parameters, 1.0) * len(tilts) if closed
+                else np.clip(parameters, 0, 1) * (len(tilts) - 1))
     segment = np.floor(position).astype(np.int64) % len(tilts)
     t = position - np.floor(position)
-    a, b = tilts[segment], tilts[(segment + 1) % len(tilts)]
+    def index(values):
+        return values % len(tilts) if closed else np.clip(values, 0, len(tilts) - 1)
+    a, b = tilts[segment], tilts[index(segment + 1)]
     if interpolation == 'LINEAR':
         return a * (1-t) + b * t
     if interpolation == 'EASE':
         blend = t*t*(3-2*t)
         return a * (1-blend) + b * blend
-    previous, following = tilts[(segment-1) % len(tilts)], tilts[(segment+2) % len(tilts)]
+    previous, following = tilts[index(segment-1)], tilts[index(segment+2)]
     if interpolation == 'CARDINAL':
         # Cubic Hermite basis with Blender's cardinal endpoint tangents.
         return ((2*t**3-3*t*t+1)*a + (-2*t**3+3*t*t)*b
@@ -223,6 +349,33 @@ def corner_layout(points, count, corners):
         parameters[arc[:-1]] = (offset + segments * distance[:-1] / distance[-1]) / count
         offset += segments
     return np.concatenate(controls), parameters
+
+
+def corner_handles(points, controls, parameters, corners):
+    """Separate tangents at pinned corners, following each side of the loop.
+
+    Keep the usual one-third chord handle length, but take its direction from
+    the original edge rather than smoothing across the opposite lip. Skip
+    coincident vertices so welded-looking corners still get usable tangents.
+    All coordinates must use the same space as the resulting control curve.
+    """
+    points, controls = _points(points), _points(controls)
+    result = {}
+    for corner in corners:
+        control = int(round(parameters[corner] * len(controls))) % len(controls)
+        handles = []
+        for step in (-1, 1):
+            direction = np.zeros(3)
+            for distance in range(1, len(points)):
+                direction = points[(corner + step * distance) % len(points)] - points[corner]
+                length = np.linalg.norm(direction)
+                if length > 0:
+                    direction /= length
+                    break
+            chord = np.linalg.norm(controls[(control + step) % len(controls)] - controls[control])
+            handles.append(controls[control] + direction * (chord / 3.0))
+        result[control] = np.asarray(handles)
+    return result
 
 
 def symmetrize_bezier(rest, posed, direction, tilts=None):
@@ -281,7 +434,7 @@ def _radius(value):
     return value
 
 
-def build_binding(vertices, edges, loop_indices, radius):
+def build_binding(vertices, edges, loop_indices, radius, closed=True, check_edges=True):
     """Bind nearby connected surface vertices to their four closest loop seeds.
 
     Distances follow mesh edges in world space, so separate teeth or another
@@ -301,23 +454,25 @@ def build_binding(vertices, edges, loop_indices, radius):
     if (
         loop_indices.ndim != 1
         or not np.issubdtype(loop_indices.dtype, np.integer)
-        or len(loop_indices) < 4
+        or len(loop_indices) < (4 if closed else 2)
         or len(np.unique(loop_indices)) != len(loop_indices)
         or loop_indices.min() < 0
         or loop_indices.max() >= len(vertices)
     ):
-        raise ValueError("The loop must contain at least four unique mesh vertex indices")
+        raise ValueError("Use at least four unique vertices for a loop or two for an open path")
     loop_indices = loop_indices.astype(np.int64, copy=False)
     adjacency = [[] for _ in vertices]
     edge_lengths = np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
     for (first, second), distance in zip(edges, edge_lengths):
         adjacency[first].append((int(second), float(distance)))
         adjacency[second].append((int(first), float(distance)))
-    for first, second in zip(loop_indices, np.roll(loop_indices, -1)):
-        if not any(neighbor == second for neighbor, _ in adjacency[first]):
+    starts = loop_indices if closed else loop_indices[:-1]
+    ends = np.roll(loop_indices, -1) if closed else loop_indices[1:]
+    for first, second in zip(starts, ends):
+        if check_edges and not any(neighbor == second for neighbor, _ in adjacency[first]):
             raise ValueError("Consecutive mouth loop vertices must share a mesh edge")
     loop_lengths = np.linalg.norm(
-        vertices[loop_indices] - vertices[np.roll(loop_indices, -1)], axis=1
+        vertices[starts] - vertices[ends], axis=1
     )
     if not np.any(loop_lengths > 0.0):
         raise ValueError("The selected loop has zero usable length")

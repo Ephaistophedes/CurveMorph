@@ -1,17 +1,17 @@
-"""CurveMorph: a temporary Bézier deformer for authoring ordinary shape keys."""
+"""CurveMorph: facial Bézier controls for authoring ordinary shape keys."""
 
 bl_info = {
-    "name": "CurveMorph — Bézier Shape Keys",
+    "name": "CurveMorph",
     "author": "CurveMorph contributors",
-    "version": (3, 4, 0),
+    "version": (4, 0, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > CurveMorph",
-    "description": "Pose a selected mouth loop with Bézier controls and save shape keys",
+    "description": "Pose faces with multiple open or closed Bézier controls, mirror controls and save shape keys",
     "category": "Mesh",
 }
 
 import bpy
-from . import session, setup, operators, ui, corner_overlay
+from . import session, setup, operators, ui, corner_overlay, facial
 
 FALLOFF_ITEMS = [
     ('SMOOTH', 'Smooth', 'Smooth transition, matching the original mouth falloff'),
@@ -57,6 +57,8 @@ class CurveMorphState(bpy.types.PropertyGroup):
         ('CORNERS', 'Corners', ''), ('MASK', 'Mask', ''), ('PAINT', 'Paint', '')],
         default='NONE', options={'HIDDEN'})
     setup_editing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
+    fit_editing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
+    fit_backup: bpy.props.PointerProperty(type=bpy.types.Curve, options={'HIDDEN'})
     use_mask: bpy.props.BoolProperty(
         name="Limit to Vertex Group", default=False,
         description="Optional: multiply the distance falloff by this group's weights; unassigned vertices stay still",
@@ -89,6 +91,7 @@ def register():
     bpy.types.Scene.curvemorph_settings = bpy.props.PointerProperty(type=CurveMorphSetup)
     bpy.types.Object.curvemorph = bpy.props.PointerProperty(type=CurveMorphState)
     bpy.types.Object.curvemorph_target = bpy.props.PointerProperty(type=bpy.types.Object)
+    facial.register()
     operators.register()
     ui.register()
     session.register()
@@ -100,6 +103,7 @@ def unregister():
     session.unregister()
     ui.unregister()
     operators.unregister()
+    facial.unregister()
     del bpy.types.Object.curvemorph_target
     del bpy.types.Object.curvemorph
     del bpy.types.Scene.curvemorph_settings

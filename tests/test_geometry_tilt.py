@@ -35,6 +35,28 @@ class TiltGeometryTests(unittest.TestCase):
         assert_allclose(tangents, [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]])
         assert_allclose(geometry.bezier_tangents(co*0, co*0, co*0, np.array([0.])), 0)
 
+    def test_sharp_joint_tilt_axis_reverses_with_loop_winding(self):
+        co = np.array([[-1., 0, 0], [0, .5, .1], [1, 0, 0], [0, -.5, .1]])
+        left = co + (np.roll(co, 1, axis=0) - co) / 3
+        right = co + (np.roll(co, -1, axis=0) - co) / 3
+        parameters = np.arange(4) / 4
+        forward = geometry.bezier_tangents(co, left, right, parameters, average_joints=True)
+        reverse = geometry.bezier_tangents(co[::-1], right[::-1], left[::-1], parameters, average_joints=True)
+        assert_allclose(forward, -reverse[::-1], atol=1e-12)
+        assert_allclose(forward[[0, 2]], [[0, 1, 0], [0, -1, 0]], atol=1e-12)
+        assert_allclose(geometry.bezier_tangents(co*0, co*0, co*0, parameters, average_joints=True), 0)
+
+    def test_corner_handles_skip_coincident_loop_vertices(self):
+        loop = np.array([[-1., 0, 0], [-1, 0, 0], [0, .5, .1],
+                         [1, 0, 0], [1, 0, 0], [0, -.5, .1]])
+        controls, parameters = geometry.corner_layout(loop, 5, [3, 0])
+        handles = geometry.corner_handles(loop, controls, parameters, [3, 0])
+        for index, pair in handles.items():
+            self.assertTrue(np.isfinite(pair).all())
+            self.assertTrue(np.all(np.linalg.norm(pair - controls[index], axis=1) > 0))
+            # Both lip handles point into the mouth, never beyond its corner.
+            self.assertTrue(np.all(abs(pair[:, 0]) < 1))
+
 
 if __name__ == '__main__':
     unittest.main()

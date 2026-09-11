@@ -55,6 +55,10 @@ class CURVEMORPH_OT_create(bpy.types.Operator):
             mesh = setup.create_controls(context)
         except Exception as error:
             return _failed(self, error)
+        from . import facial
+        facial.sync_legacy(mesh)
+        context.scene.face_pose_settings.ui_mode = 'POSE'
+        mesh.face_pose_index = next(i for i, entry in enumerate(mesh.face_pose_curves) if entry.legacy)
         # The session already exists; retain a successful undo step even if
         # entering Edit Mode is unavailable in this particular editor context.
         try:
@@ -91,6 +95,40 @@ class CURVEMORPH_OT_reset(_SessionOperator, bpy.types.Operator):
             session.reset_pose(_target(context))
         except Exception as error:
             return _failed(self, error)
+        return {'FINISHED'}
+
+
+class CURVEMORPH_OT_fit_begin(_SessionOperator, bpy.types.Operator):
+    bl_idname = 'curvemorph.fit_begin'
+    bl_label = 'Adjust Curve Fit'
+    bl_description = 'Edit the neutral curve and handles without moving the mesh; save or reset an active pose first'
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        try:
+            session.begin_curve_fit(context, _target(context))
+        except Exception as error:
+            return _failed(self, error)
+        return {'FINISHED'}
+
+
+class CURVEMORPH_OT_fit_end(_SessionOperator, bpy.types.Operator):
+    bl_idname = 'curvemorph.fit_end'
+    bl_label = 'Apply Fit'
+    bl_description = 'Keep the edited curve as its neutral fit, or cancel to restore the original curve; the mesh stays unchanged'
+    bl_options = {'UNDO'}
+    cancel: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        try:
+            mesh = _target(context)
+            if self.cancel:
+                session.cancel_curve_fit(mesh)
+            else:
+                session.apply_curve_fit(mesh)
+        except Exception as error:
+            return _failed(self, error)
+        self.report({'INFO'}, 'Original curve restored.' if self.cancel else 'Curve fit saved. Edit Controls to pose the mouth.')
         return {'FINISHED'}
 
 
@@ -335,6 +373,7 @@ _CLASSES = (
     CURVEMORPH_OT_setup_edit, CURVEMORPH_OT_auto_corners, CURVEMORPH_OT_setup_capture, CURVEMORPH_OT_mask_selection,
     CURVEMORPH_OT_setup_apply, CURVEMORPH_OT_setup_discard,
     CURVEMORPH_OT_create, CURVEMORPH_OT_edit, CURVEMORPH_OT_reset, CURVEMORPH_OT_symmetrize,
+    CURVEMORPH_OT_fit_begin, CURVEMORPH_OT_fit_end,
     CURVEMORPH_OT_rebuild, CURVEMORPH_OT_save, CURVEMORPH_OT_finish,
     CURVEMORPH_OT_refresh,
 )

@@ -14,7 +14,8 @@ def resolve_target(context):
         if obj.type == 'MESH':
             return obj
         target = obj.curvemorph_target
-        if target and target.type == 'MESH' and target.curvemorph.curve == obj:
+        if target and target.type == 'MESH' and (target.curvemorph.curve == obj
+                or any(e.curve == obj for e in target.face_pose_curves)):
             return target
     target = context.scene.curvemorph_settings.target
     return target if target and target.type == 'MESH' else None
@@ -66,6 +67,7 @@ def _selected_mesh(context):
 def pause(mesh):
     """Neutralize only the temporary preview, preserving curve edits for resume."""
     session._check_editable(mesh)
+    session._check_not_fitting(mesh)
     if mesh.curvemorph.token:
         session._owned_curve(mesh)
         preview = session._preview(mesh)
